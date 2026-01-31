@@ -82,6 +82,52 @@ Next steps (recommended)
 - Synthesis constraints: create prompts that require answers to reference file names and line ranges and to avoid unsupported speculation.
 - UI: expose file path and a link to the source in response cards so users can verify answers quickly.
 
+Phase 4 & 5 — Retrieval tuning and answer synthesis (what we added)
+-----------------------------------------------------------------
+We've implemented Phase 4 (retrieval tuning) and Phase 5 (answer synthesis constraints) with two new modules:
+
+- `backend/code_retriever.py` — a retriever factory tuned for code queries. It performs simple intent detection (file / how / why / explain) and returns a Weaviate-backed retriever with search kwargs optimized for precision (smaller `k` for file-location queries, slightly larger for explanatory queries).
+
+- `backend/code_qa.py` — a small CLI QA runner that:
+	- detects intent from the user question,
+	- retrieves precise code chunks from Weaviate,
+	- synthesizes an answer using an LLM with a strict prompt that requires the model to only use the retrieved context and to cite filenames and line ranges.
+
+Quick usage (retrieval & QA)
+1. Ensure environment variables are set (Weaviate + OpenAI):
+
+```bash
+export WEAVIATE_URL="https://<your-weaviate-cluster>"
+export WEAVIATE_API_KEY="<your-key>"
+export WEAVIATE_INDEX_NAME="langchain"
+export OPENAI_API_KEY="sk-..."
+```
+
+2. Run a sample query using the CLI QA script (one-liner question):
+
+```bash
+python -m backend.code_qa "Where is ingestion implemented?"
+```
+
+What the QA script does
+- Uses `code_retriever.detect_intent()` to classify the question into intents like `file`, `how`, `why`, or `explain`.
+- Builds search kwargs tuned for that intent (for example, `k=3` for `file` queries to favor precision).
+- Retrieves the top chunks and constructs a context with explicit headers `### filename [start-end]` followed by the chunk content.
+- Sends the context + question to the LLM with a prompt that instructs the model to only answer from the context and to cite the source(s) inline as `[filename:start-end]`.
+
+Why this reduces hallucinations
+- By reducing `k` and enforcing a prompt that forbids adding external facts, we narrow the model's knowledge to retrieved evidence and require citations.
+- Intent-aware retrieval adapts precision vs. coverage: `file` queries return fewer, highly-relevant chunks; `how`/`why` queries allow more chunks so explanatory connections can be made.
+
+Customization points
+- Tuning `k` and other Weaviate search parameters in `backend/code_retriever.py` (function `get_search_kwargs_for_intent`) directly affects precision vs recall.
+- Prompt template in `backend/code_qa.py` (variable `PROMPT`) is intentionally strict; you can tweak wording to suit your team's style or to require different citation formats.
+
+Next recommended steps after Phase 4 & 5
+- Frontend: show inline citations and make source code expandable (Phase 6).
+- Validation: build a question set and automated tests that assert the model cites the correct files (Phase 7).
+
+
 If you need a fully self-hosted experience without Weaviate, consider adding a FAISS/Chroma fallback index and a small FastAPI wrapper to serve queries locally (the `langserve` branch is another option with fewer features).
 
 ## 📚 Technical description
