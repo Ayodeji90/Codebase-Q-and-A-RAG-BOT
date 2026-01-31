@@ -16,6 +16,74 @@ This project is now deployed using [LangGraph Cloud](https://langchain-ai.github
 > [!NOTE]
 > This [branch](https://github.com/langchain-ai/chat-langchain/tree/langserve) **does not** have the same set of features.
 
+Codebase Q&A (local ingestion)
+--------------------------------
+
+This repository now includes tooling to index a local codebase for Codebase Q&A (RAG adapted for source code). The ingestion preserves file structure and formatting, splits by logical code boundaries (functions/classes), and stores rich metadata so answers can cite exact files and line ranges.
+
+Files added
+- `.env.example` — example environment variables for local development (Weaviate, Supabase/RecordManager, OpenAI key, etc.).
+- `backend/ingest_codebase.py` — script to ingest a local repository (CODEBASE_PATH) into Weaviate using the repo's existing embedding and record manager patterns.
+- `backend/code_ingest_utils.py` — utilities that read files preserving indentation, detect language, split files into logical chunks (functions/classes) and emit LangChain `Document` objects with metadata (path, filename, language, chunk_type, line_start, line_end).
+- `backend/verify_weaviate_metadata.py` — quick verification utility that queries the Weaviate index to ensure metadata fields were saved and prints sample objects.
+
+Quick usage (local ingestion)
+1. Install Python dependencies and the package in editable mode:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+
+2. Copy and fill `.env.example` or export the required environment variables:
+
+Required environment variables for ingestion:
+- WEAVIATE_URL — Weaviate cluster URL
+- WEAVIATE_API_KEY — Weaviate API key
+- RECORD_MANAGER_DB_URL — Postgres/Supabase connection string (for LangChain SQLRecordManager)
+- OPENAI_API_KEY — embeddings / LLM calls
+- CODEBASE_PATH — path to the repository to index (optional; defaults to repo root)
+- WEAVIATE_INDEX_NAME — optional index name
+
+3. Run the ingestion script to index your repository:
+
+```bash
+export WEAVIATE_URL="https://<your-weaviate-cluster>"
+export WEAVIATE_API_KEY="<your-key>"
+export RECORD_MANAGER_DB_URL="postgresql://user:pass@host:port/db"
+export OPENAI_API_KEY="sk-..."
+export CODEBASE_PATH="/path/to/your/repo"
+python -m backend.ingest_codebase
+```
+
+Notes on ingestion behavior
+- The ingestion script preserves file formatting and stores each file as structured chunks. It detects language from file extensions and splits by logical boundaries (functions, classes, or top-level sections), then further splits large blocks into manageable line ranges.
+- Each stored chunk includes metadata fields: `path`, `filename`, `language`, `chunk_type`, `line_start`, `line_end`, and the text content. These fields are stored as Weaviate attributes and are queryable.
+
+Verify metadata in Weaviate
+--------------------------------
+After ingestion, you can verify that metadata fields were persisted with the included verification script:
+
+```bash
+export WEAVIATE_INDEX_NAME="langchain"  # or your index name
+python -m backend.verify_weaviate_metadata
+```
+
+The verifier prints sample objects returned from Weaviate; each object should show the fields listed above and a `text` field with the chunk content.
+
+Why this helps
+- Chunking by logical code boundaries (not token counts) reduces the risk of cutting code mid-function.
+- Rich metadata allows the retriever to filter and the synthesizer to cite exact files and line ranges in responses.
+
+Next steps (recommended)
+- Retrieval tuning: reduce `k` and prefer precision for code queries; implement intent-aware retriever strategies (file-level vs explanation queries).
+- Synthesis constraints: create prompts that require answers to reference file names and line ranges and to avoid unsupported speculation.
+- UI: expose file path and a link to the source in response cards so users can verify answers quickly.
+
+If you need a fully self-hosted experience without Weaviate, consider adding a FAISS/Chroma fallback index and a small FastAPI wrapper to serve queries locally (the `langserve` branch is another option with fewer features).
+
 ## 📚 Technical description
 
 There are two components: ingestion and question-answering.
